@@ -1,0 +1,69 @@
+# Loki and Promtail Setup Instructions
+# Author: <SHAIK ASMA>
+# Date: <October 6, 2025>
+
+# --------------------------------------------
+# Step 1: Start Loki using Docker
+# --------------------------------------------
+docker run -d --name=loki \
+  -p 3100:3100 \
+  grafana/loki:2.9.0 \
+  -config.file=/etc/loki/local-config.yaml
+
+# --------------------------------------------
+# Step 2: Start Promtail to collect logs
+# --------------------------------------------
+docker run -d --name=promtail \
+  -v /var/log:/var/log \
+  -v /etc/promtail:/etc/promtail \
+  grafana/promtail:2.9.0 \
+  -config.file=/etc/promtail/config.yml
+
+# --------------------------------------------
+# Step 3: Sample promtail config.yml (save inside /etc/promtail/config.yml)
+# --------------------------------------------
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://localhost:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: system
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          __path__: /var/log/*.log
+
+# --------------------------------------------
+# Step 4: Verify Loki is running
+# --------------------------------------------
+docker ps
+# You should see both 'loki' and 'promtail' containers running.
+
+# --------------------------------------------
+# Step 5: View Logs from Loki API
+# --------------------------------------------
+# Query logs directly (example for 'varlogs' job)
+curl -G -s "http://localhost:3100/loki/api/v1/query" \
+  --data-urlencode 'query={job="varlogs"}' | jq
+
+# --------------------------------------------
+# Step 6: (Optional) Connect Grafana to Loki
+# --------------------------------------------
+# 1. Run Grafana:
+docker run -d -p 3000:3000 grafana/grafana
+
+# 2. Open http://localhost:3000 → Add Data Source → Loki → http://localhost:3100
+# 3. Explore logs in Grafana dashboard.
+
+# --------------------------------------------
+# Output
+# --------------------------------------------
+# ✅ Logs successfully collected from containers and viewable via Loki or Grafana.
