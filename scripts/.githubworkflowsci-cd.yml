@@ -1,0 +1,101 @@
+name: CI / Build / Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  packages: write   # allows pushing to GHCR
+
+jobs:
+  # ---------------------------
+  # 1️⃣ Continuous Integration
+  # ---------------------------
+  ci:
+    name: Run Scripts (CI)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Run Python Script
+        run: python hello.py
+
+      - name: Run Bash Script
+        run: |
+          chmod +x scripts/sysinfo.sh
+          ./scripts/sysinfo.sh
+
+  # ---------------------------
+  # 2️⃣ Build and Push to GHCR
+  # ---------------------------
+  build_and_push:
+    name: Build & Push Docker Image
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/devops-final-assessment:latest
+
+  # ---------------------------
+  # 3️⃣ (Optional) Deploy to Nomad
+  # ---------------------------
+  deploy_nomad:
+    name: Deploy to Nomad Server
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    if: ${{ secrets.REMOTE_HOST != '' && secrets.SSH_PRIVATE_KEY != '' }}
+    steps:
+      - name: SSH into remote host and deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.REMOTE_SSH_PORT || '22' }}
+          script: |
+            echo "Deploying Nomad job..."
+            mkdir -p ~/deploy
+            cat > ~/deploy/hello.nomad <<'EOF'
+            job "hello" {
+              datacenters = ["dc1"]
+              group "hello-group" {
+                task "hello-task" {
+                  driver = "docker"
+                  config {
+                    image = "ghcr.io/${{ github.repository_owner }}/devops-final-assessment:latest"
+                  }
+                  resources {
+                    cpu    = 100
+                    memory = 128
+                  }
+                }
+              }
+            }
+            EOF
+            nomad job run ~/deploy/hello.nomad || nomad job plan -output ~/deploy/hello.nomad
